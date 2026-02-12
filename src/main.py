@@ -277,22 +277,55 @@ class PDFHandler(FileSystemEventHandler):
         self.batch_timer = None
         self.root = None
         self.monitor = None
+        self.recently_added = set()  # Para evitar duplicados
         
     def set_references(self, root, monitor):
         """Establecer referencias al root y monitor"""
         self.root = root
         self.monitor = monitor
-        
-    def on_created(self, event):
-        if not event.is_directory and event.src_path.lower().endswith('.pdf'):
-            # Pequeña pausa para asegurar que el archivo esté completo
-            time.sleep(0.2)
-            file_name = os.path.basename(event.src_path)
+    
+    def is_pdf_ready(self, file_path):
+        """Verificar si el archivo PDF está completamente escrito"""
+        try:
+            # Verificar que el archivo existe
+            if not os.path.exists(file_path):
+                return False
             
-            # Verificar si el archivo existe y no está duplicado
-            if os.path.exists(event.src_path) and event.src_path not in self.pending_files:
-                self.pending_files.append(event.src_path)
-                print(f"📄 Archivo detectado: {file_name}")
+            # Intentar abrir el archivo para verificar que no está bloqueado
+            with open(file_path, 'rb') as f:
+                # Leer los primeros bytes para verificar que es un PDF
+                header = f.read(4)
+                if header != b'%PDF':
+                    return False
+            
+            # Intentar abrir con PyMuPDF para verificar que está completo
+            try:
+                doc = pymupdf.open(file_path)
+                doc.close()
+                return True
+            except:
+                return False
+                
+        except Exception:
+            return False
+    
+    def add_pdf_file(self, file_path):
+        """Agregar archivo PDF a la lista de pendientes"""
+        file_name = os.path.basename(file_path)
+        
+        # Verificar si el archivo ya fue agregado recientemente
+        if file_path in self.recently_added:
+            return
+        
+        # Verificar si el archivo está listo
+        if self.is_pdf_ready(file_path):
+            if file_path not in self.pending_files:
+                self.pending_files.append(file_path)
+                self.recently_added.add(file_path)
+                print(f"📄 Archivo PDF detectado: {file_name}")
+                
+                # Programar limpieza del registro de archivos recientes
+                self.root.after(5000, lambda: self.recently_added.discard(file_path))
                 
                 # Cancelar timer anterior si existe
                 if self.batch_timer:
@@ -300,7 +333,35 @@ class PDFHandler(FileSystemEventHandler):
                     self.batch_timer = None
                 
                 # Programar nueva verificación en 1 segundo
-                self.batch_timer = self.root.after(1000, self.process_batch)
+                self.batch_timer = self.root.after(1500, self.process_batch)
+        else:
+            # Si el archivo no está listo, programar verificación más tarde
+            self.root.after(500, lambda: self.retry_add_pdf(file_path))
+    
+    def retry_add_pdf(self, file_path):
+        """Reintentar agregar archivo PDF después de un tiempo"""
+        if file_path not in self.pending_files and os.path.exists(file_path):
+            if self.is_pdf_ready(file_path):
+                self.add_pdf_file(file_path)
+    
+    def on_created(self, event):
+        """Manejar evento de creación de archivo"""
+        if not event.is_directory and event.src_path.lower().endswith('.pdf'):
+            time.sleep(0.1)  # Pequeña pausa
+            self.add_pdf_file(event.src_path)
+    
+    def on_modified(self, event):
+        """Manejar evento de modificación de archivo"""
+        if not event.is_directory and event.src_path.lower().endswith('.pdf'):
+            # Solo procesar si el archivo no está ya en pendientes
+            if event.src_path not in self.pending_files:
+                self.add_pdf_file(event.src_path)
+    
+    def on_moved(self, event):
+        """Manejar evento de movimiento/renombrado de archivo"""
+        if not event.is_directory and event.dest_path.lower().endswith('.pdf'):
+            time.sleep(0.1)
+            self.add_pdf_file(event.dest_path)
     
     def process_batch(self):
         """Procesar el lote de archivos acumulados"""
@@ -311,9 +372,12 @@ class PDFHandler(FileSystemEventHandler):
             # Hacer copia de la lista actual para procesar
             current_batch = self.pending_files.copy()
             
+            # Verificar que todos los archivos siguen existiendo
+            valid_batch = [f for f in current_batch if os.path.exists(f)]
+            
             # Si hay archivos, procesarlos
-            if current_batch:
-                self.monitor.process_batch_files(current_batch)
+            if valid_batch:
+                self.monitor.process_batch_files(valid_batch)
 
 class FacturasMonitor:
     def __init__(self):
@@ -331,25 +395,28 @@ class FacturasMonitor:
         print(f"🔍 Monitoreando carpeta: {FACTURAS_PATH}")
         print("📂 Esperando nuevos archivos PDF...")
         print("=" * 50)
-        
-    def ask_process_files(self, file_count, file_names):
-        """Preguntar al usuario si desea procesar los archivos"""
-        # Traer la ventana al frente
-        self.root.attributes('-topmost', True)
-        self.root.focus_force()
-        
-        # Crear lista de todos los nombres de archivos
-        all_files = "\n".join([f"• {name}" for name in file_names])
-        
-        respuesta = messagebox.askyesno(
-            "Nuevos archivos detectados",
-            f"Se han detectado {file_count} nuevo(s) archivo(s) PDF:\n\n{all_files}\n\n¿Desea procesarlos ahora?"
-        )
-        
-        # Restaurar atributo
-        self.root.attributes('-topmost', False)
-        
-        return respuesta
+    
+    def process_file(self, pdf_path):
+        """Procesar un archivo PDF individual"""
+        try:
+            file_name = os.path.basename(pdf_path)
+            print(f"🔄 Procesando: {file_name}")
+            
+            # Verificar que el archivo aún existe
+            if not os.path.exists(pdf_path):
+                print(f"⚠️ Archivo no encontrado: {file_name}")
+                return
+            
+            # Crear instancia del extractor
+            extractor = ExtractordeFacturas(pdf_path)
+            
+            # Imprimir los datos
+            extractor.ImprimirDatos()
+            
+            print(f"✅ Procesado exitosamente: {file_name}")
+            
+        except Exception as e:
+            print(f"❌ Error procesando {os.path.basename(pdf_path)}: {str(e)}")
     
     def process_batch_files(self, batch_files):
         """Procesar un lote de archivos"""
@@ -386,27 +453,25 @@ class FacturasMonitor:
                 if pdf_path in self.event_handler.pending_files:
                     self.event_handler.pending_files.remove(pdf_path)
     
-    def process_file(self, pdf_path):
-        """Procesar un archivo PDF individual"""
-        try:
-            file_name = os.path.basename(pdf_path)
-            print(f"🔄 Procesando: {file_name}")
-            
-            # Verificar que el archivo aún existe
-            if not os.path.exists(pdf_path):
-                print(f"⚠️ Archivo no encontrado: {file_name}")
-                return
-            
-            # Crear instancia del extractor
-            extractor = ExtractordeFacturas(pdf_path)
-            
-            # Imprimir los datos
-            extractor.ImprimirDatos()
-            
-            print(f"✅ Procesado exitosamente: {file_name}")
-            
-        except Exception as e:
-            print(f"❌ Error procesando {os.path.basename(pdf_path)}: {str(e)}")
+    def ask_process_files(self, file_count, file_names):
+        """Preguntar al usuario si desea procesar los archivos"""
+        # Traer la ventana al frente
+        self.root.attributes('-topmost', True)
+        self.root.focus_force()
+        self.root.lift()
+        
+        # Crear lista de todos los nombres de archivos
+        all_files = "\n".join([f"• {name}" for name in file_names])
+        
+        respuesta = messagebox.askyesno(
+            "Nuevos archivos detectados",
+            f"Se han detectado {file_count} nuevo(s) archivo(s) PDF:\n\n{all_files}\n\n¿Desea procesarlos ahora?"
+        )
+        
+        # Restaurar atributo
+        self.root.attributes('-topmost', False)
+        
+        return respuesta
     
     def start(self):
         """Iniciar el monitor"""
