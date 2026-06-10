@@ -85,7 +85,7 @@ class ExtractordeFacturas:
         
         resultado = []
         for caracter in texto:
-            resultado.append(reemplazos.get(caracter, caracter))
+            resultado.append(reemplazos.get(caracter, '?'))
         
         return ''.join(resultado)
     
