@@ -167,8 +167,6 @@ class ExtractordeFacturas:
     
     def ImprimirDatos(self):
         
-        print(self.print_data)
-        
         printer_port = ''
         printer_hwid = '00:12:f3:11:3b:96'
         printer_hwid = printer_hwid.replace(':', '')
