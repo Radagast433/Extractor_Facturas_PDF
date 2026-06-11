@@ -85,7 +85,7 @@ class ExtractordeFacturas:
         
         resultado = []
         for caracter in texto:
-            resultado.append(reemplazos.get(caracter, '?'))
+            resultado.append(reemplazos.get(caracter, caracter))
         
         return ''.join(resultado)
     
@@ -166,6 +166,9 @@ class ExtractordeFacturas:
         #print(''.join(self.print_data))
     
     def ImprimirDatos(self):
+        
+        print(self.print_data)
+        
         printer_port = ''
         printer_hwid = '00:12:f3:11:3b:96'
         printer_hwid = printer_hwid.replace(':', '')
@@ -213,7 +216,7 @@ class ExtractordeFacturas:
         self.emiter_dict['Giro'] = self.text[0][1].replace(' Giro: ', '') + ' ' + self.text[0][2] + ' ' + self.text[0][3]
         self.emiter_dict['Email'] = self.text[0][4][8:self.text[0][4].find('Telefono') - 1]
         self.emiter_dict['Telefono'] = self.text[0][4][self.text[0][4].find('Telefono') + len('Telefono :'):]
-        self.emiter_dict['Tipo de Venta'] = self.text[0][5].replace(' TIPO DE VENTA: ', '')
+        self.emiter_dict['Tipo de Venta'] = self.text[0][5].replace(' TIPO DE VENTA: ', '').replace('TIPO DE VENTA: ', '')
 
     def ExtraerDatosReceptor(self):
         ####################### DATOS RECEPTOR #######################
